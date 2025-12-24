@@ -10,9 +10,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  getAllReadings,
   calculateStats,
   formatTimestamp,
+  getAllReadings,
+  getAvailableStations,
   Reading,
 } from '../../services/firebaseService';
 
@@ -25,11 +26,32 @@ export default function ChartsScreen() {
   const [readings, setReadings] = useState<Reading[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedStation] = useState('STATION_00');
+  const [stations, setStations] = useState<string[]>([]);
+  const [selectedStation, setSelectedStation] = useState<string>('STATION_00');
 
+  // Load available stations on mount
   useEffect(() => {
-    loadReadings();
-  }, [range]);
+    loadStations();
+  }, []);
+
+  // Load readings when station or range changes
+  useEffect(() => {
+    if (selectedStation) {
+      loadReadings();
+    }
+  }, [range, selectedStation]);
+
+  const loadStations = async () => {
+    try {
+      const availableStations = await getAvailableStations();
+      setStations(availableStations);
+      if (availableStations.length > 0 && !availableStations.includes(selectedStation)) {
+        setSelectedStation(availableStations[0]);
+      }
+    } catch (err) {
+      console.error('Error loading stations:', err);
+    }
+  };
 
   const getReadingsCount = () => {
     switch (range) {
@@ -62,6 +84,11 @@ export default function ChartsScreen() {
     setRefreshing(false);
   };
 
+  // Format station name for display
+  const formatStationName = (stationId: string) => {
+    return stationId.replace('_', ' ');
+  };
+
   const stats = calculateStats(readings);
 
   return (
@@ -75,8 +102,33 @@ export default function ChartsScreen() {
         {/* Station */}
         <View style={styles.header}>
           <Text style={styles.stationLabel}>Weather Station</Text>
-          <Text style={styles.stationName}>{selectedStation.replace('_', ' ')}</Text>
+          <Text style={styles.stationName}>{formatStationName(selectedStation)}</Text>
         </View>
+
+        {/* Station selector */}
+        {stations.length > 1 && (
+          <View style={styles.stationSelector}>
+            {stations.map((station) => (
+              <Pressable
+                key={station}
+                style={[
+                  styles.stationButton,
+                  selectedStation === station && styles.stationButtonActive,
+                ]}
+                onPress={() => setSelectedStation(station)}
+              >
+                <Text
+                  style={[
+                    styles.stationButtonText,
+                    selectedStation === station && styles.stationButtonTextActive,
+                  ]}
+                >
+                  {formatStationName(station)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {/* Mode toggle */}
         <View style={styles.segmentRow}>
@@ -167,22 +219,12 @@ export default function ChartsScreen() {
                     <Text style={styles.statValue}>{stats.avgHumidity.toFixed(1)}%</Text>
                   </View>
                   <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>Min / Max Humidity:</Text>
-                    <Text style={styles.statValue}>
-                      {stats.minHumidity.toFixed(1)}% / {stats.maxHumidity.toFixed(1)}%
-                    </Text>
-                  </View>
-                  <View style={styles.statRow}>
                     <Text style={styles.statLabel}>Avg Particles:</Text>
-                    <Text style={styles.statValue}>{stats.avgParticulas.toFixed(1)}</Text>
-                  </View>
-                  <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>Total Readings:</Text>
-                    <Text style={styles.statValue}>{readings.length}</Text>
+                    <Text style={styles.statValue}>{stats.avgParticulas.toFixed(0)}</Text>
                   </View>
                 </ChartCard>
 
-                <ChartCard title="Temperature Range">
+                <ChartCard title="Temperature with Average">
                   <SimpleChart
                     data={readings.map((r) => r.temperatura)}
                     color="#ef4444"
@@ -193,13 +235,13 @@ export default function ChartsScreen() {
                 </ChartCard>
 
                 <ChartCard title="Recent Readings">
-                  {readings.slice(-5).reverse().map((reading, index) => (
-                    <View key={index} style={styles.readingRow}>
+                  {readings.slice(0, 10).map((r, i) => (
+                    <View key={i} style={styles.readingRow}>
                       <Text style={styles.readingTime}>
-                        {formatTimestamp(reading.timestamp)}
+                        {formatTimestamp(r.timestamp)}
                       </Text>
                       <Text style={styles.readingValues}>
-                        {reading.temperatura.toFixed(1)}°C | {reading.humidade.toFixed(0)}%
+                        {r.temperatura.toFixed(1)}°C | {r.humidade.toFixed(0)}% | {r.particulas}
                       </Text>
                     </View>
                   ))}
@@ -209,10 +251,10 @@ export default function ChartsScreen() {
           </>
         )}
 
-        {/* No data */}
+        {/* Empty state */}
         {!loading && readings.length === 0 && (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No readings available</Text>
+            <Text style={styles.emptyText}>No data available</Text>
           </View>
         )}
       </ScrollView>
@@ -220,17 +262,18 @@ export default function ChartsScreen() {
   );
 }
 
-type SegmentProps = {
+// Helper components
+type SegmentButtonProps = {
   label: string;
   active: boolean;
   onPress: () => void;
 };
 
-function SegmentButton({ label, active, onPress }: SegmentProps) {
+function SegmentButton({ label, active, onPress }: SegmentButtonProps) {
   return (
     <Pressable
-      onPress={onPress}
       style={[styles.segmentButton, active && styles.segmentButtonActive]}
+      onPress={onPress}
     >
       <Text style={[styles.segmentLabel, active && styles.segmentLabelActive]}>
         {label}
@@ -335,6 +378,32 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#0f172a',
+  },
+  stationSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  stationButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  stationButtonActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  stationButtonText: {
+    fontSize: 14,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  stationButtonTextActive: {
+    color: '#ffffff',
   },
   segmentRow: {
     flexDirection: 'row',
