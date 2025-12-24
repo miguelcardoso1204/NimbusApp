@@ -1,3 +1,4 @@
+// charts.tsx
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,6 +14,7 @@ import {
   calculateStats,
   formatTimestamp,
   getAllReadings,
+  getAvailableStations,
   Reading,
 } from '../../services/firebaseService';
 
@@ -40,7 +42,7 @@ const calculateMovingAverage = (data: number[], windowSize: number = 5): number[
 // Calculate linear regression for trend line
 const calculateTrend = (data: number[]): { slope: number; trendLine: number[] } => {
   if (data.length === 0) return { slope: 0, trendLine: [] };
-  
+
   const n = data.length;
   let xSum = 0;
   let ySum = 0;
@@ -66,7 +68,7 @@ const calculateTrend = (data: number[]): { slope: number; trendLine: number[] } 
 const getTrendInfo = (slope: number, unit: string) => {
   const absSlope = Math.abs(slope);
   const perReading = absSlope.toFixed(3);
-  
+
   if (slope > 0.01) {
     return { direction: 'rising', icon: '↑', color: '#ef4444', text: `+${perReading}${unit}/reading` };
   } else if (slope < -0.01) {
@@ -82,11 +84,40 @@ export default function ChartsScreen() {
   const [readings, setReadings] = useState<Reading[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedStation] = useState('STATION_00');
 
+  // ✅ Station selection like Home
+  const [stations, setStations] = useState<string[]>([]);
+  const [selectedStation, setSelectedStation] = useState<string>('STATION_00');
+
+  // Load available stations on mount
   useEffect(() => {
-    loadReadings();
-  }, [range]);
+    loadStations();
+  }, []);
+
+  // Load readings whenever range or station changes
+  useEffect(() => {
+    if (selectedStation) {
+      loadReadings();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, selectedStation]);
+
+  const loadStations = async () => {
+    try {
+      const availableStations = await getAvailableStations();
+      setStations(availableStations);
+
+      // If current selection isn't available, pick the first one
+      if (
+        availableStations.length > 0 &&
+        !availableStations.includes(selectedStation)
+      ) {
+        setSelectedStation(availableStations[0]);
+      }
+    } catch (err) {
+      console.error('Error loading stations:', err);
+    }
+  };
 
   const getReadingsCount = () => {
     switch (range) {
@@ -154,6 +185,9 @@ export default function ChartsScreen() {
   const humidityMA = calculateMovingAverage(humidityData, maWindowSize);
   const particlesMA = calculateMovingAverage(particlesData, maWindowSize);
 
+  // Format station name for display
+  const formatStationName = (stationId: string) => stationId.replace('_', ' ');
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -165,8 +199,33 @@ export default function ChartsScreen() {
         {/* Station */}
         <View style={styles.header}>
           <Text style={styles.stationLabel}>Weather Station</Text>
-          <Text style={styles.stationName}>{selectedStation.replace('_', ' ')}</Text>
+          <Text style={styles.stationName}>{formatStationName(selectedStation)}</Text>
         </View>
+
+        {/* ✅ Station buttons (like Home) */}
+        {stations.length > 1 && (
+          <View style={styles.stationSelector}>
+            {stations.map((station) => (
+              <Pressable
+                key={station}
+                style={[
+                  styles.stationButton,
+                  selectedStation === station && styles.stationButtonActive,
+                ]}
+                onPress={() => setSelectedStation(station)}
+              >
+                <Text
+                  style={[
+                    styles.stationButtonText,
+                    selectedStation === station && styles.stationButtonTextActive,
+                  ]}
+                >
+                  {formatStationName(station)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {/* Mode toggle */}
         <View style={styles.segmentRow}>
@@ -215,28 +274,14 @@ export default function ChartsScreen() {
             {mode === 'overview' ? (
               <>
                 <ChartCard title="Temperature">
-                  <SimpleChart
-                    data={tempData}
-                    color="#ef4444"
-                    unit="°C"
-                  />
-                  <Text style={styles.chartInfo}>
-                    {readings.length} readings
-                  </Text>
+                  <SimpleChart data={tempData} color="#ef4444" unit="°C" />
+                  <Text style={styles.chartInfo}>{readings.length} readings</Text>
                 </ChartCard>
                 <ChartCard title="Humidity">
-                  <SimpleChart
-                    data={humidityData}
-                    color="#3b82f6"
-                    unit="%"
-                  />
+                  <SimpleChart data={humidityData} color="#3b82f6" unit="%" />
                 </ChartCard>
                 <ChartCard title="Particles">
-                  <SimpleChart
-                    data={particlesData}
-                    color="#22c55e"
-                    unit=""
-                  />
+                  <SimpleChart data={particlesData} color="#22c55e" unit="" />
                 </ChartCard>
               </>
             ) : (
@@ -253,13 +298,10 @@ export default function ChartsScreen() {
                       {stats.minTemp.toFixed(1)}°C / {stats.maxTemp.toFixed(1)}°C
                     </Text>
                   </View>
-                  <TrendIndicator
-                    label="Temperature Trend"
-                    trendInfo={tempTrendInfo}
-                  />
-                  
+                  <TrendIndicator label="Temperature Trend" trendInfo={tempTrendInfo} />
+
                   <View style={styles.sectionDivider} />
-                  
+
                   <View style={styles.statRow}>
                     <Text style={styles.statLabel}>Avg Humidity:</Text>
                     <Text style={styles.statValue}>{stats.avgHumidity.toFixed(1)}%</Text>
@@ -270,24 +312,18 @@ export default function ChartsScreen() {
                       {stats.minHumidity.toFixed(1)}% / {stats.maxHumidity.toFixed(1)}%
                     </Text>
                   </View>
-                  <TrendIndicator
-                    label="Humidity Trend"
-                    trendInfo={humidityTrendInfo}
-                  />
-                  
+                  <TrendIndicator label="Humidity Trend" trendInfo={humidityTrendInfo} />
+
                   <View style={styles.sectionDivider} />
-                  
+
                   <View style={styles.statRow}>
                     <Text style={styles.statLabel}>Avg Particles:</Text>
                     <Text style={styles.statValue}>{stats.avgParticulas.toFixed(1)}</Text>
                   </View>
-                  <TrendIndicator
-                    label="Particles Trend"
-                    trendInfo={particlesTrendInfo}
-                  />
-                  
+                  <TrendIndicator label="Particles Trend" trendInfo={particlesTrendInfo} />
+
                   <View style={styles.sectionDivider} />
-                  
+
                   <View style={styles.statRow}>
                     <Text style={styles.statLabel}>Total Readings:</Text>
                     <Text style={styles.statValue}>{readings.length}</Text>
@@ -482,28 +518,18 @@ function SimpleChart({ data, color, unit, showAvgLine, avgValue }: SimpleChartPr
   const sampledData = data.filter((_, i) => i % sampleRate === 0);
 
   // Calculate average line position as percentage from bottom
-  const avgPercent = avgValue !== undefined
-    ? ((avgValue - min) / range) * 100
-    : 0;
+  const avgPercent =
+    avgValue !== undefined ? ((avgValue - min) / range) * 100 : 0;
 
   return (
     <View style={styles.chartContainer}>
       <View style={styles.chartLabels}>
-        <Text style={styles.chartLabelText}>
-          {max.toFixed(1)}{unit}
-        </Text>
-        <Text style={styles.chartLabelText}>
-          {min.toFixed(1)}{unit}
-        </Text>
+        <Text style={styles.chartLabelText}>{max.toFixed(1)}{unit}</Text>
+        <Text style={styles.chartLabelText}>{min.toFixed(1)}{unit}</Text>
       </View>
       <View style={[styles.chartBars, { height: chartHeight }]}>
         {showAvgLine && avgValue !== undefined && (
-          <View
-            style={[
-              styles.avgLine,
-              { bottom: `${avgPercent}%` },
-            ]}
-          />
+          <View style={[styles.avgLine, { bottom: `${avgPercent}%` }]} />
         )}
         {sampledData.map((value, index) => {
           const heightPercent = ((value - min) / range) * 100;
@@ -557,27 +583,19 @@ function AnalysisChart({
   // Sample data for display
   const sampleRate = Math.max(1, Math.floor(data.length / 40));
   const sampledIndices = data.map((_, i) => i).filter((i) => i % sampleRate === 0);
-  
+
   const sampledData = sampledIndices.map((i) => data[i]);
   const sampledMA = sampledIndices.map((i) => movingAverage[i]);
   const sampledTrend = sampledIndices.map((i) => trendLine[i]);
 
-  const getYPosition = (value: number) => {
-    return ((value - min) / range) * 100;
-  };
+  const getYPosition = (value: number) => ((value - min) / range) * 100;
 
   return (
     <View style={styles.chartContainer}>
       <View style={styles.chartLabels}>
-        <Text style={styles.chartLabelText}>
-          {max.toFixed(1)}{unit}
-        </Text>
-        <Text style={styles.chartLabelText}>
-          {((max + min) / 2).toFixed(1)}{unit}
-        </Text>
-        <Text style={styles.chartLabelText}>
-          {min.toFixed(1)}{unit}
-        </Text>
+        <Text style={styles.chartLabelText}>{max.toFixed(1)}{unit}</Text>
+        <Text style={styles.chartLabelText}>{((max + min) / 2).toFixed(1)}{unit}</Text>
+        <Text style={styles.chartLabelText}>{min.toFixed(1)}{unit}</Text>
       </View>
       <View style={[styles.analysisChartArea, { height: chartHeight }]}>
         {/* Trend Line (background) */}
@@ -587,7 +605,7 @@ function AnalysisChart({
             const prevY = getYPosition(sampledTrend[index - 1]);
             const currY = getYPosition(value);
             const segmentWidth = 100 / (sampledTrend.length - 1);
-            
+
             return (
               <View
                 key={`trend-${index}`}
@@ -615,7 +633,7 @@ function AnalysisChart({
             const yPos = getYPosition(value);
             const dotSize = 6;
             const segmentWidth = 100 / sampledMA.length;
-            
+
             return (
               <View
                 key={`ma-${index}`}
@@ -677,6 +695,32 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
   },
+
+  // ✅ Station selector styles (same vibe as Home)
+  stationSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 16,
+    gap: 8,
+  },
+  stationButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+  },
+  stationButtonActive: {
+    backgroundColor: '#2563eb',
+  },
+  stationButtonText: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  stationButtonTextActive: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+
   segmentRow: {
     flexDirection: 'row',
     marginBottom: 12,
